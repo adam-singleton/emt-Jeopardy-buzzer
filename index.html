@@ -431,14 +431,26 @@ const setupWarn=document.getElementById('setupWarn');
 
 function connectRoom(){
   if(!configured){ setupWarn.style.display='block'; return; }
+  if(typeof supabase==='undefined'){
+    // CDN blocked or offline. Say so plainly instead of throwing, which would
+    // abort the rest of page init (including the login gate wiring below).
+    setupWarn.textContent='Couldn\u2019t load the Supabase library (no internet, or the network blocks the CDN). The board still works; phone buzzers will not. Reconnect and reload to enable them.';
+    setupWarn.style.display='block';
+    return;
+  }
   if(channel){ supa.removeChannel(channel); channel=null; }
   supa = supa || supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
   channel = supa.channel('jeopardy-'+ROOM, { config:{ broadcast:{ self:false } }});
 
   channel.on('broadcast',{event:'buzz'},({payload})=>{
     if(!armed) return;
-    if(buzzes.find(b=>b.team===payload.team)) return; // one buzz per team per round
-    buzzes.push({team:payload.team, t:performance.now()});
+    if(!payload||!payload.team) return;
+    const who=String(payload.team).slice(0,60);   // bound length; names are short
+    if(buzzes.find(b=>b.team===who)) return; // one buzz per team per round
+    // Hard cap: anyone with the room code can send buzzes, and an unbounded list
+    // would push the real buzz order off the projected screen.
+    if(buzzes.length>=Math.max(teams.length,10)+2) return;
+    buzzes.push({team:who, t:performance.now()});
     renderBuzzes(); playBuzz();
     if(overlay.classList.contains('show')) renderClueScore();
   });
@@ -623,6 +635,7 @@ let currentBankLabel=''; // '' = local only
 
 function bankClient(){ // reuse the same supabase client used for buzzers
   if(!configured) return null;
+  if(typeof supabase==='undefined') return null;  // CDN blocked/offline — callers handle null
   supa = supa || supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
   return supa;
 }
@@ -1144,7 +1157,7 @@ const restored=loadState();
 if(!restored){ for(let i=0;i<DEFAULT_TEAMS;i++) teams.push({name:'Team '+(i+1),score:0,logo:null}); }
 renderScores();
 renderBoard();updateArmedUI();
-connectRoom();
+try{ connectRoom(); }catch(e){ console.warn('Buzzer connect failed',e); }
 
 // Question-bank bar: enable if Supabase is configured, else show a hint
 if(configured){ bankRefreshList(); }
@@ -1187,6 +1200,7 @@ document.getElementById('signOutBtn').onclick=async()=>{ const c=bankClient(); i
 (async()=>{
   if(!configured){ showLogin(); loginErr.textContent='Add Supabase keys in config.js, then run the SQL setup.'; return; }
   const c=bankClient();
+  if(!c){ showLogin(); loginErr.textContent='Couldn\u2019t reach the sign-in service — check the internet connection and reload.'; return; }
   const {data}=await c.auth.getSession();
   if(data&&data.session){ showApp(data.session); } else { showLogin(); }
   c.auth.onAuthStateChange((event,session)=>{ if(session) showApp(session); else showLogin(); });

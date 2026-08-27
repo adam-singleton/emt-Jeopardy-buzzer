@@ -579,6 +579,7 @@ let currentBankLabel=''; // '' = local only
 
 function bankClient(){ // reuse the same supabase client used for buzzers
   if(!configured) return null;
+  if(typeof supabase==='undefined') return null;  // CDN blocked/offline — callers handle null
   supa = supa || supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
   return supa;
 }
@@ -625,6 +626,14 @@ async function bankSave(){
     categories:data.categories.map(cat=>({title:cat.title,cells:cat.cells.map(x=>({question:x.question,answer:x.answer,used:false}))})),
     finalJ:{question:data.finalJ.question,answer:data.finalJ.answer,used:false}
   };
+  // Overwriting an existing label destroys that bank with no undo, so ask —
+  // Delete already confirms, and this path is just as destructive.
+  if([...bankSelect.options].some(o=>o.value===label)){
+    if(!confirm('A saved bank called "'+label+'" already exists.\n\nOverwrite it? Its current questions will be replaced and this cannot be undone.')){
+      setBankStatus('Save cancelled — type a new label to save a separate bank.');
+      return;
+    }
+  }
   setBankStatus('Saving…');
   const {error}=await c.from('jeopardy_boards').upsert({label,board:clean,updated_at:new Date().toISOString()},{onConflict:'label'});
   if(error){ setBankStatus('Save failed: '+error.message,true); return; }
@@ -1116,6 +1125,7 @@ document.getElementById('signOutBtn').onclick=async()=>{ const c=bankClient(); i
 (async()=>{
   if(!configured){ showLogin(); loginErr.textContent='Add Supabase keys in config.js, then run the SQL setup.'; return; }
   const c=bankClient();
+  if(!c){ showLogin(); loginErr.textContent='Couldn\u2019t reach the sign-in service — check the internet connection and reload.'; return; }
   const {data}=await c.auth.getSession();
   if(data&&data.session){ showApp(data.session); } else { showLogin(); }
   c.auth.onAuthStateChange((event,session)=>{ if(session) showApp(session); else showLogin(); });

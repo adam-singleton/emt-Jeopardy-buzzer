@@ -123,6 +123,7 @@ let finalMode=false, myScore=0, wagerLocked=false, teamScores={}, claimedSet=[];
 let earlyWarned=false, penaltyUntil=0;   // anti-spam: warned once, then 0.5s penalty lockout
 let lastRound=null;                       // last round number seen from the host
 let gotState=false, joinTimedOut=false, stateTimer=null;  // did the host ever answer us?
+let strandedTimer=null;                   // our team disappeared from the host's list
 
 const $=id=>document.getElementById(id);
 function show(screen){['screenCode','screenTeam','screenBuzz','screenWager'].forEach(s=>$(s).classList.toggle('active',s===screen));}
@@ -151,6 +152,10 @@ $('backToCode').onclick=async()=>{ await teardown(); show('screenCode'); };
 
 /* Connect to room channel */
 function connect(){
+  if(typeof supabase==='undefined'){
+    $('codeErr').textContent='Couldn\u2019t load the buzzer library — check your internet, then reload.';
+    $('codeErr').style.display='block'; show('screenCode'); return;
+  }
   supa=supa||supabase.createClient(SUPABASE_URL,SUPABASE_ANON_KEY);
   if(channel) supa.removeChannel(channel);
   channel=supa.channel('jeopardy-'+ROOM,{config:{broadcast:{self:false}}});
@@ -161,6 +166,17 @@ function connect(){
     teamScores=payload.scores||{};
     claimedSet=payload.claimed||[];
     renderTeams();
+    // If our team is gone from the host's list we're stranded (renamed while this
+    // phone was asleep, or the team was removed). Debounced so a rename broadcast
+    // arriving just after the state update doesn't bounce us needlessly.
+    if(myTeam && teamList.length && !teamList.includes(myTeam)){
+      if(!strandedTimer) strandedTimer=setTimeout(()=>{
+        strandedTimer=null;
+        if(myTeam && teamList.length && !teamList.includes(myTeam)){
+          myTeam=null; hasBuzzed=false; renderTeams(); show('screenTeam');
+        }
+      },1500);
+    }else if(strandedTimer){ clearTimeout(strandedTimer); strandedTimer=null; }
     const wasArmed=armed; armed=!!payload.armed;
     // Round number: every arm gets a new number, so phones reset even if they
     // slept through the disarm (locked screens miss broadcasts).
