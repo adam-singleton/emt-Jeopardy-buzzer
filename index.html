@@ -334,6 +334,7 @@
 
 <div class="toolbar">
   <button class="btn" id="presentBtn">▶ Present Mode</button>
+  <button class="btn secondary" id="openDisplay" title="Open the projector window. Controls stay here.">🖥 Open Display</button>
   <button class="btn secondary" id="logoToggle">🖼 Logos: ON</button>
   <button class="btn secondary" id="addTeam">+ Add Team</button>
   <button class="btn secondary" id="resetTiles">Reset Tiles</button>
@@ -410,6 +411,7 @@ const VALUES=[200,400,600,800,1000];
 const NUM_CATEGORIES=6;
 const DEFAULT_TEAMS=3;
 let editMode=false, soundOn=true, activeCell=null;
+let clueRevealed=false;   // has the host revealed the current clue's answer
 let armed=false;
 let buzzes=[]; // {team, t}
 
@@ -743,8 +745,9 @@ function openClue(ci,ri,tileEl){
   }
   renderClueScore();
   overlay.classList.add('show');
+  pushDisplay();
 }
-document.getElementById('revealBtn').onclick=()=>{mA.style.display='flex';playReveal();};
+document.getElementById('revealBtn').onclick=()=>{mA.style.display='flex';playReveal();clueRevealed=true;pushDisplay();};
 document.getElementById('markDone').onclick=()=>closeModal(true);
 document.getElementById('closeX').onclick=()=>closeModal(false);
 overlay.addEventListener('click',e=>{if(e.target===overlay)closeModal(false);});
@@ -779,7 +782,9 @@ function openFinal(){
     fjBroadcastFinal=true; broadcastState();   // tell phones to show wager entry
     renderFinalScore();
   }
+  clueRevealed=false;
   overlay.classList.add('show');
+  pushDisplay();
 }
 document.getElementById('finalJBtn').onclick=openFinal;
 
@@ -943,15 +948,17 @@ function closeModal(markUsed){
   fjWagers={}; fjRevealed=false; fjScored=[]; fjFromPhone={};
   if(fjBroadcastFinal){ fjBroadcastFinal=false; broadcastState(); }
   if(finalScoreEl) finalScoreEl.style.display='none';
+  clueRevealed=false;
   disarmBuzzers();
+  pushDisplay();
 }
 
 /* ===== BUZZER PANEL ===== */
 const armedState=document.getElementById('armedState'),armBtn=document.getElementById('armBtn'),
   buzzlist=document.getElementById('buzzlist'),emptyNote=document.getElementById('emptyNote');
 let roundN=0;   // increments every arm so phones reset even if they missed a disarm
-function armBuzzers(){armed=true;roundN++;buzzes=[];renderBuzzes();updateArmedUI();broadcastState();}
-function disarmBuzzers(){armed=false;updateArmedUI();broadcastState();}
+function armBuzzers(){armed=true;roundN++;buzzes=[];renderBuzzes();updateArmedUI();broadcastState();pushDisplay();}
+function disarmBuzzers(){armed=false;updateArmedUI();broadcastState();pushDisplay();}
 function updateArmedUI(){
   if(armed){armedState.textContent='● ARMED — waiting for buzzes';armedState.className='armed-state armed';armBtn.textContent='Disarm';}
   else{armedState.textContent=buzzes.length?'Locked — buzz order below':'Idle';armedState.className='armed-state'+(buzzes.length?' locked':'');armBtn.textContent='Arm Buzzers';}
@@ -971,6 +978,7 @@ function renderBuzzes(){
     li.innerHTML=`<span class="rank">${i+1}</span>${logo}<span class="who">${b.team.replace(/</g,'&lt;')}</span><span class="ms">${gap}</span>`;
     buzzlist.appendChild(li);
   });
+  pushDisplay();
 }
 
 /* ===== TEAMS / SCORES ===== */
@@ -1046,6 +1054,7 @@ function renderScores(){
     scoresEl.appendChild(d);
   });
   renderPresentStrip();
+  pushDisplay();
 }
 
 // Compact bottom score strip shown in Present mode
@@ -1196,6 +1205,51 @@ async function doLogin(){
 loginBtn.onclick=doLogin;
 document.getElementById('loginPass').addEventListener('keydown',e=>{if(e.key==='Enter')doLogin();});
 document.getElementById('signOutBtn').onclick=async()=>{ const c=bankClient(); if(c) await c.auth.signOut(); showLogin(); };
+
+/* ===== SECOND-SCREEN DISPLAY =====
+   Pushes a full snapshot to display.html over BroadcastChannel (same browser,
+   same machine — no network, and nothing here touches the Supabase channel the
+   phones use). With no display window open the posts go nowhere, so every call
+   site is a no-op until you click "Open Display". */
+/* var, not const/let: pushDisplay() is called by renderScores()/renderBuzzes()
+   during init, before this line runs. var hoists as undefined so those early
+   calls return harmlessly; const/let would throw a TDZ ReferenceError. */
+var dispBC=(typeof BroadcastChannel!=='undefined')?new BroadcastChannel('emt-jeopardy-display'):null;
+var displayReady=false;
+function pushDisplay(){
+  if(!displayReady||!dispBC) return;
+  try{
+    const clueOpen=activeCell&&overlay.classList.contains('show')&&!editMode;
+    let clue=null;
+    if(clueOpen){
+      const isF=!!activeCell.isFinal;
+      const src=isF?data.finalJ:data.categories[activeCell.ci].cells[activeCell.ri];
+      clue={
+        isFinal:isF,
+        value:isF?'★ FINAL JEOPARDY':('$'+activeValue),
+        question:src.question, answer:src.answer,
+        showQuestion:isF?fjRevealed:true,   // Final hides the clue until wagers lock
+        revealed:isF?fjRevealed:clueRevealed
+      };
+    }
+    dispBC.postMessage({
+      t:'snapshot',
+      room:ROOM, joinUrl:joinURL(), bank:currentBankLabel||'', values:VALUES,
+      logosOn:!document.body.classList.contains('logos-off'),
+      categories:data.categories.map(c=>({title:c.title,cells:c.cells.map(x=>({used:!!x.used}))})),
+      teams:teams.map(t=>({name:t.name,score:t.score,logo:t.logo||null})),
+      armed,
+      buzzes:buzzes.map((b,i)=>({team:b.team,gap:i===0?0:Math.round(b.t-buzzes[0].t)})),
+      clue
+    });
+  }catch(e){ console.warn('Display push failed',e); }
+}
+if(dispBC){ dispBC.onmessage=e=>{ if(e.data&&e.data.t==='hello') pushDisplay(); }; }
+document.getElementById('openDisplay').onclick=()=>{
+  window.open('display.html','emtJeopardyDisplay','width=1280,height=800');
+  setTimeout(pushDisplay,600);   // in case it loads before its hello reaches us
+};
+displayReady=true; pushDisplay();
 
 (async()=>{
   if(!configured){ showLogin(); loginErr.textContent='Add Supabase keys in config.js, then run the SQL setup.'; return; }
