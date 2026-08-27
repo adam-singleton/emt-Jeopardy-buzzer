@@ -339,6 +339,7 @@
   <button class="btn secondary" id="resetTiles">Reset Tiles</button>
   <button class="btn secondary" id="resetScores">Reset Scores</button>
   <button class="btn secondary" id="soundToggle">🔊 Sound: ON</button>
+  <button class="btn secondary" id="testSound" title="Play a test tone on the CURRENT output device. Use after plugging into the house system.">🔈 Test Sound</button>
   <button class="btn secondary" id="newRoom">New Room Code</button>
   <button class="btn secondary" id="releaseTeams" title="Free up all team picks so phones can choose again">↺ Release Teams</button>
   <button class="btn" id="showQR">📱 Show QR</button>
@@ -1031,6 +1032,29 @@ document.getElementById('addTeam').onclick=()=>addTeam();
 document.getElementById('resetTiles').onclick=()=>{data.categories.forEach(c=>c.cells.forEach(x=>x.used=false));renderBoard();saveState();};
 document.getElementById('resetScores').onclick=()=>{teams.forEach(t=>t.score=0);renderScores();saveState();};
 document.getElementById('soundToggle').onclick=function(){soundOn=!soundOn;this.textContent='🔊 Sound: '+(soundOn?'ON':'OFF');};
+
+/* Test Sound — rebuilds the AudioContext so it binds to whatever output device
+   is CURRENT (laptop speakers vs. the headphone jack feeding the house system).
+   A context keeps the device it was created with, so switching outputs after the
+   page loaded sends audio to the old device until it's rebuilt. */
+async function rebindAudio(){
+  try{ if(actx) await actx.close(); }catch(e){}
+  actx=null;
+  const c=ac();
+  if(c.state==='suspended'){ try{ await c.resume(); }catch(e){} }
+  return c;
+}
+document.getElementById('testSound').onclick=async function(){
+  const btn=this, label=btn.textContent;
+  btn.disabled=true; btn.textContent='🔈 Testing…';
+  try{
+    await rebindAudio();
+    beep(523,0.00,0.35,'triangle',0.5);
+    beep(659,0.30,0.35,'triangle',0.5);
+    beep(784,0.60,0.70,'triangle',0.5);
+  }catch(e){ console.warn('Test sound failed',e); }
+  setTimeout(()=>{ btn.disabled=false; btn.textContent=label; },1500);
+};
 document.getElementById('newRoom').onclick=()=>{ROOM=makeCode();saveRoom();document.getElementById('roomCode').textContent=ROOM;buzzes=[];claimedTeams={};renderBuzzes();connectRoom();};
 document.getElementById('releaseTeams').onclick=()=>{ releaseTeams(); document.getElementById('releaseTeams').textContent='↺ Released!'; setTimeout(()=>{document.getElementById('releaseTeams').textContent='↺ Release Teams';},1200); };
 
