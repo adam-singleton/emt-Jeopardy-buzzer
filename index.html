@@ -443,7 +443,22 @@ function connectRoom(){
     if(overlay.classList.contains('show')) renderClueScore();
   });
   channel.on('broadcast',{event:'join'},({payload})=>{
-    // optional: could track joins; harmless to ignore
+    // A phone just connected. The only other automatic broadcast happens when
+    // THIS page subscribes — long before students join — so without this reply
+    // a late phone sits on "Waiting for host to set up teams…" until some
+    // unrelated action happens to broadcast.
+    // The payload carries the phone's team, so a host refresh (which wipes
+    // claimedTeams) can rebuild claims instead of letting two phones share one team.
+    if(payload && payload.team && teams.find(t=>t.name===payload.team)){
+      claimedTeams[payload.team]=true;
+    }
+    broadcastState();
+  });
+  channel.on('broadcast',{event:'release'},({payload})=>{
+    // Phone backed out of its team — free just that one, not everybody's.
+    if(!payload||!payload.team) return;
+    delete claimedTeams[payload.team];
+    broadcastState();
   });
   channel.on('broadcast',{event:'claim'},({payload})=>{
     if(!payload||!payload.team) return;
@@ -989,8 +1004,22 @@ function renderScores(){
       <div class="adj" style="margin-top:4px;">
         <button class="minus" data-d="-200">-200</button><button class="minus" data-d="-400">-400</button><button class="minus" data-d="-600">-600</button><button class="minus" data-d="-800">-800</button><button class="minus" data-d="-1000">-1000</button>
       </div>`;
-    d.querySelector('input.name').addEventListener('input',e=>{tm.name=e.target.value;saveState();});
-    d.querySelector('input.name').addEventListener('change',broadcastState);
+    const nameInp=d.querySelector('input.name');
+    let prevName=tm.name;
+    nameInp.addEventListener('focus',()=>{prevName=tm.name;});
+    nameInp.addEventListener('input',e=>{tm.name=e.target.value;saveState();});
+    nameInp.addEventListener('change',()=>{
+      const from=prevName, to=tm.name;
+      if(from!==to){
+        // claimedTeams and the phones' myTeam are both keyed by name, so a rename
+        // strands any phone already locked to the old one. Carry the claim over
+        // and tell the phones to follow.
+        if(claimedTeams[from]){ delete claimedTeams[from]; claimedTeams[to]=true; }
+        if(channel) channel.send({type:'broadcast',event:'rename',payload:{from,to}});
+        prevName=to;
+      }
+      broadcastState();
+    });
     d.querySelector('.logo').addEventListener('click',()=>{
       const inp=document.createElement('input');inp.type='file';inp.accept='image/*';
       inp.onchange=()=>{const f=inp.files[0];if(!f)return;compressImage(f,url=>{tm.logo=url;renderScores();broadcastState();saveState();});};
@@ -1064,10 +1093,13 @@ function playerURL(){
   try{ return location.origin+location.pathname.replace(/index\.html?$/,'')+'player.html'; }
   catch(e){ return 'player.html'; }
 }
+// The QR embeds the room code so scanning students skip typing it entirely —
+// mistyped codes were indistinguishable from a silent host.
+function joinURL(){ return playerURL()+'?r='+encodeURIComponent(ROOM); }
 document.getElementById('showQR').onclick=()=>{
   const holder=document.getElementById('qrHolder');
   holder.innerHTML='';
-  const url=playerURL();
+  const url=joinURL();
   document.getElementById('qrUrl').textContent=url;
   document.getElementById('qrRoom').textContent=ROOM;
   try{

@@ -122,6 +122,7 @@ let supa=null, channel=null, ROOM=null, myTeam=null, armed=false, hasBuzzed=fals
 let finalMode=false, myScore=0, wagerLocked=false, teamScores={}, claimedSet=[];
 let earlyWarned=false, penaltyUntil=0;   // anti-spam: warned once, then 0.5s penalty lockout
 let lastRound=null;                       // last round number seen from the host
+let gotState=false, joinTimedOut=false, stateTimer=null;  // did the host ever answer us?
 
 const $=id=>document.getElementById(id);
 function show(screen){['screenCode','screenTeam','screenBuzz','screenWager'].forEach(s=>$(s).classList.toggle('active',s===screen));}
@@ -141,7 +142,12 @@ $('codeBtn').onclick=()=>{
   show('screenTeam');
 };
 $('codeInput').addEventListener('keydown',e=>{if(e.key==='Enter')$('codeBtn').click();});
-$('backToCode').onclick=()=>{teardown();show('screenCode');};
+/* The host QR encodes ?r=CODE so students never hand-type it. */
+try{
+  const pre=(new URLSearchParams(location.search).get('r')||'').trim().toUpperCase();
+  if(/^[A-Z2-9]{3,6}$/.test(pre)){ $('codeInput').value=pre; setTimeout(()=>$('codeBtn').click(),0); }
+}catch(e){}
+$('backToCode').onclick=async()=>{ await teardown(); show('screenCode'); };
 
 /* Connect to room channel */
 function connect(){
@@ -150,6 +156,7 @@ function connect(){
   channel=supa.channel('jeopardy-'+ROOM,{config:{broadcast:{self:false}}});
 
   channel.on('broadcast',{event:'state'},({payload})=>{
+    gotState=true; joinTimedOut=false;
     teamList=payload.teams||[];
     teamScores=payload.scores||{};
     claimedSet=payload.claimed||[];
@@ -176,13 +183,35 @@ function connect(){
     setConn(true);
   });
 
+  // Host renamed a team we may be locked to — follow it, or we're stranded
+  // on a name that no longer exists and can't re-pick.
+  channel.on('broadcast',{event:'rename'},({payload})=>{
+    if(!payload||!payload.from||!payload.to) return;
+    if(myTeam===payload.from){
+      myTeam=payload.to;
+      $('myTeam').textContent=myTeam; $('myTeamW').textContent=myTeam;
+      renderTeams();
+    }
+  });
+
+  gotState=false; joinTimedOut=false;
+  if(stateTimer) clearTimeout(stateTimer);
+  stateTimer=setTimeout(()=>{ if(!gotState){ joinTimedOut=true; renderTeams(); } },6000);
+
   channel.subscribe(status=>{
     const on=status==='SUBSCRIBED';
     setConn(on);
-    if(on){ channel.send({type:'broadcast',event:'join',payload:{}}); }
+    if(on){ channel.send({type:'broadcast',event:'join',payload:{team:myTeam||null}}); }
   });
 }
-function teardown(){ if(channel){supa.removeChannel(channel);channel=null;} myTeam=null; }
+async function teardown(){
+  if(channel){
+    if(myTeam){ try{ await channel.send({type:'broadcast',event:'release',payload:{team:myTeam}}); }catch(e){} }
+    supa.removeChannel(channel); channel=null;
+  }
+  myTeam=null; gotState=false; joinTimedOut=false;
+  if(stateTimer){ clearTimeout(stateTimer); stateTimer=null; }
+}
 
 function setConn(on){
   ['teamDot','connDot','connDotW'].forEach(d=>{const el=$(d);if(el)el.classList.toggle('on',on);});
@@ -198,7 +227,12 @@ function renderTeams(){
     g.innerHTML='<div style="grid-column:1/3;color:#9fb0ff;font-size:14px;">You\u2019re locked in as <b style="color:var(--jep-gold-bright)">'+myTeam.replace(/</g,'&lt;')+'</b></div>';
     return;
   }
-  if(!teamList.length){g.innerHTML='<div style="grid-column:1/3;color:#9fb0ff;font-size:14px;">Waiting for host to set up teams…</div>';return;}
+  if(!teamList.length){
+    g.innerHTML=joinTimedOut
+      ? '<div style="grid-column:1/3;color:#ffcf6b;font-size:14px;line-height:1.5;">No answer from the host for room <b>'+ROOM+'</b>.<br>Check the code on the screen and that the host page is open, then tap ← Back to retry.</div>'
+      : '<div style="grid-column:1/3;color:#9fb0ff;font-size:14px;">Waiting for host to set up teams…</div>';
+    return;
+  }
   teamList.forEach(name=>{
     const taken=claimedSet.includes(name);
     const b=document.createElement('button');b.textContent=name;
