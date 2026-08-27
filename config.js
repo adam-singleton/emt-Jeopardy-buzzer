@@ -10,5 +10,5 @@
 //  To change projects later, just edit the two values below.
 // ------------------------------------------------------------
 
-const SUPABASE_URL      = "https://waevxytvbebmczygmzrx.supabase.co";
-const SUPABASE_ANON_KEY = "sb_publishable_8EZVNkhi_cdQXorFeZMs-Q_GqjGxPD7";
+const SUPABASE_URL      = "https://gsekxgdehdvvobqzadyk.supabase.co";
+const SUPABASE_ANON_KEY = "sb_publishable_vPpWZem5THaKEtj8YpH0yw_6dP9JG_E";
